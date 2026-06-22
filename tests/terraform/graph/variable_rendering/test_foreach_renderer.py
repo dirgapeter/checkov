@@ -148,6 +148,38 @@ def test_new_resources_foreach():
         assert config_name.endswith("[\"bucket_a\"]") or config_name.endswith("[\"bucket_b\"]")
 
 
+def test_foreach_with_concat_in_locals():
+    """
+    Regression test for: for_each = toset(local.x) where local.x = concat([...], [...]).
+    The concat() result is stored as an interpolation string in the locals block.
+    When substituted into toset(local.x) it creates a nested ${...} expression that
+    must be fully evaluated so that the resource is expanded into three separate instances.
+    """
+    dir_name = 'foreach_examples/concat_in_locals'
+    local_graph, _ = build_and_get_graph_by_path(dir_name, render_var=True)
+
+    resources = [ver for ver in local_graph.vertices if ver.block_type == 'resource']
+    assert len(resources) == 3, (
+        f"Expected 3 resource instances (one per email), got {len(resources)}: "
+        f"{[r.name for r in resources]}"
+    )
+
+    resource_names = {r.name for r in resources}
+    assert resource_names == {
+        'aws_sns_topic_subscription.fail["mail1"]',
+        'aws_sns_topic_subscription.fail["mail2"]',
+        'aws_sns_topic_subscription.fail["mail3"]',
+    }
+
+    for resource in resources:
+        # endpoint must be replaced with each.value (the email string), not the literal "each.value"
+        endpoint = resource.attributes.get('endpoint')
+        assert endpoint != ['each.value'], (
+            f"Resource {resource.name} still has unrendered 'each.value' for endpoint"
+        )
+        assert isinstance(endpoint, list) and endpoint[0] in {'mail1', 'mail2', 'mail3'}
+
+
 def test_resources_flow():
     dir_name = 'foreach_examples/depend_resources'
     local_graph, _ = build_and_get_graph_by_path(dir_name, render_var=True)
