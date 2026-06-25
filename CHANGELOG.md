@@ -1,6 +1,29 @@
 # CHANGELOG
 
-## [Unreleased](https://github.com/bridgecrewio/checkov/compare/3.2.533...HEAD)
+## [Unreleased](https://github.com/bridgecrewio/checkov/compare/3.3.2...HEAD)
+
+## [3.3.2](https://github.com/bridgecrewio/checkov/compare/3.3.1...3.3.2) - 2026-06-23
+
+### Bug Fix
+
+- **terraform_plan:** handle computed log_bucket in CKV_GCP_62 and CKV_GCP_63 - [#7582](https://github.com/bridgecrewio/checkov/pull/7582)
+- **terraform:** pass CKV_GCP_123 when remove_default_node_pool is true - [#7575](https://github.com/bridgecrewio/checkov/pull/7575)
+
+## [3.3.1](https://github.com/bridgecrewio/checkov/compare/3.3.0...3.3.1) - 2026-06-11
+
+### Feature
+
+- **serverless:** disable vars opt out - [#7574](https://github.com/bridgecrewio/checkov/pull/7574)
+
+## [3.3.0](https://github.com/bridgecrewio/checkov/compare/3.2.534...3.3.0) - 2026-06-10
+
+- no noteworthy changes
+
+## [3.2.534](https://github.com/bridgecrewio/checkov/compare/3.2.533...3.2.534) - 2026-06-09
+
+### Feature
+
+- **general:** fix regex to include hyphen - [#7566](https://github.com/bridgecrewio/checkov/pull/7566)
 
 ## [3.2.533](https://github.com/bridgecrewio/checkov/compare/3.2.532...3.2.533) - 2026-06-04
 
