@@ -51,6 +51,17 @@ class TestTerraformEvaluation(TestCase):
         expected = False
         self.assertEqual(expected, evaluate_terraform(input_str))
 
+    def test_conditional_expression_with_bool_logical_operators(self):
+        # Covers: count = local.x == true && local.y ? 1 : 0  (python-hcl2 uppercases booleans)
+        self.assertEqual(True, evaluate_terraform('True && True'))
+        self.assertEqual(False, evaluate_terraform('True && False'))
+        self.assertEqual(True, evaluate_terraform('False || True'))
+        self.assertEqual(1, evaluate_terraform('True == True && True ? 1 : 0'))
+        self.assertEqual(0, evaluate_terraform('True == True && True == False'))
+        self.assertEqual(0, evaluate_terraform('False == True && True ? 1 : 0'))
+        self.assertEqual(1, evaluate_terraform('True == True || False ? 1 : 0'))
+        self.assertEqual(1, evaluate_terraform('${True == True && True ? 1 : 0}'))
+
     def test_nested_conditional_expression(self):
         input_str = "{for resource in concat(true ? [{'name'='test'}] : [], false ? [] : [{'name'='test2'}]) : resource.name => resource}"
         value = evaluate_terraform(input_str)
@@ -571,6 +582,40 @@ def test_evaluate_range_pattern() -> None:
 
     # Test non-range pattern for comparison
     assert evaluate("1+1") == 2
+
+
+def test_replace_string_value_bool_multi_local_no_premature_eval():
+    """
+    Regression test: when a list-wrapped conditional expression references two local
+    bool variables, substituting the first one must NOT trigger evaluate_terraform on
+    the intermediate result (which still has an unresolved second reference).
+
+    Before the fix, replace_string_value called evaluate_terraform immediately after
+    each bool substitution inside the list branch.  The intermediate expression
+    '${True == True && local.create_pass ? 1 : 0}' evaluated to 0 because
+    local.create_pass was still unresolved.  Subsequent substitution of create_pass
+    then operated on [0] rather than the original string, leaving count=0 forever.
+    """
+    original = ['${local.create_trail == True && local.create_pass ? 1 : 0}']
+
+    # Simulate what evaluate_vertex_attribute_from_edge does: replace one local at a time.
+    # After the first substitution the string must still contain the second reference.
+    after_first = replace_string_value(original[:], 'local.create_trail', True)
+    assert isinstance(after_first, list), "result should remain a list"
+    assert isinstance(after_first[0], str), (
+        f"result item should be a string with the second reference still in it, got {after_first[0]!r}"
+    )
+    assert 'local.create_pass' in after_first[0], (
+        f"second local ref must survive the first substitution, got {after_first[0]!r}"
+    )
+
+    # After the second substitution both refs are gone; evaluate_terraform should give 1.
+    after_second = replace_string_value(after_first, 'local.create_pass', True)
+    assert isinstance(after_second, list)
+    result = evaluate_terraform(after_second[0])
+    assert result == 1, (
+        f"fully-resolved '{{True == True && True ? 1 : 0}}' must evaluate to 1, got {result!r}"
+    )
 
 
 EVAL_DANGEROUS_INPUTS = [

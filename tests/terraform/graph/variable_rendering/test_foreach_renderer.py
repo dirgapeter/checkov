@@ -597,4 +597,41 @@ def test_foreach_renderer_with_raw_asset():
             assert virtual_resource.endswith("[\"bucket_a\"]") or virtual_resource.endswith("[\"bucket_b\"]")
 
 
+def test_count_with_bool_and_multi_local():
+    """
+    Regression test: count = local.a == true && local.b ? 1 : 0
+    Both locals are true, so the resource must be expanded to exactly one instance.
+
+    Bug: replace_string_value called evaluate_terraform immediately after substituting
+    the first bool local.  The partially-resolved expression
+    '${True == True && local.b ? 1 : 0}' evaluated to 0 (unresolved local.b treated as
+    falsy), poisoning the count before the second substitution could run.
+
+    The fixture has three resources:
+      pass          — create_trail=true AND create_pass=true  → count 1, expanded
+      fail          — create_trail=true AND create_fail=false → count 0, not expanded
+      single_local  — create_trail=true only                  → count 1, expanded (baseline)
+    """
+    dir_name = 'foreach_examples/count_bool_multi_local'
+    local_graph, _ = build_and_get_graph_by_path(dir_name, render_var=True)
+
+    vertex_names = {v.name for v in local_graph.vertices}
+
+    # Resources with count=1 must be present as [0] instances
+    assert 'aws_cloudtrail.pass[0]' in vertex_names, (
+        f"Expected 'aws_cloudtrail.pass[0]' in graph but got: {vertex_names}"
+    )
+    assert 'aws_cloudtrail.single_local[0]' in vertex_names, (
+        f"Expected 'aws_cloudtrail.single_local[0]' in graph but got: {vertex_names}"
+    )
+
+    # Resource with count=0 must NOT be expanded
+    assert 'aws_cloudtrail.fail[0]' not in vertex_names, (
+        f"'aws_cloudtrail.fail[0]' should not exist (count=0) but was found in: {vertex_names}"
+    )
+
+    # Original (unexpanded) resource blocks must be removed from the graph
+    assert 'aws_cloudtrail.pass' not in vertex_names
+    assert 'aws_cloudtrail.single_local' not in vertex_names
+
 
