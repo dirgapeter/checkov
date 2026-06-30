@@ -14,7 +14,7 @@ from checkov.terraform.graph_builder.foreach.consts import COUNT_STRING, FOREACH
 from checkov.terraform.graph_builder.foreach.utils import append_virtual_resource
 from checkov.terraform.graph_builder.graph_components.block_types import BlockType
 from checkov.terraform.graph_builder.graph_components.blocks import TerraformBlock
-from checkov.terraform.graph_builder.variable_rendering.evaluate_terraform import evaluate_terraform
+from checkov.terraform.graph_builder.variable_rendering.evaluate_terraform import evaluate_terraform, remove_interpolation
 from checkov.terraform.graph_builder.variable_rendering.renderer import TerraformVariableRenderer
 
 if typing.TYPE_CHECKING:
@@ -203,6 +203,16 @@ class ForeachAbstractHandler:
         if isinstance(statement, list):
             statement = self.extract_from_list(statement)
         evaluated_statement = evaluate_terraform(statement)
+        # When a local is defined with a bare function call (e.g. concat([...], [...])), its
+        # stored value is an interpolation string like "${concat([...],[...])}".  Substituting
+        # that into an outer expression such as toset(local.x) produces a nested interpolation
+        # "toset(${concat([...],[...])})" that evaluate_terraform cannot fully resolve in one
+        # pass.  Strip the remaining inner ${...} blocks and re-evaluate so the for_each set
+        # can be produced correctly.
+        if isinstance(evaluated_statement, str) and '${' in evaluated_statement:
+            resolved = remove_interpolation(evaluated_statement)
+            if resolved != evaluated_statement:
+                evaluated_statement = evaluate_terraform(resolved)
         if isinstance(evaluated_statement, str):
             try:
                 evaluated_statement = json.loads(evaluated_statement)
@@ -260,7 +270,7 @@ class ForeachAbstractHandler:
 
     @staticmethod
     def extract_from_list(val: Any) -> Any:
-        return val[0] if len(val) == 1 and isinstance(val[0], (str, int, list)) else val
+        return val[0] if len(val) == 1 and isinstance(val[0], (str, int, list, set)) else val
 
     @staticmethod
     def need_to_add_quotes(code: str, key: str) -> bool:
