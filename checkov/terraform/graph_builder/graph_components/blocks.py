@@ -64,6 +64,7 @@ class TerraformBlock(Block):
         self.module_connections: Dict[str, List[int]] = {}
         self.source_module: Set[int] = set()
         self.has_dynamic_block = has_dynamic_block
+        self.dynamic_attributes: dict[str, Any] | None = dynamic_attributes
         self.source_module_object: Optional[TFModule] = None
         self.for_each_index: Optional[Any] = None
         self.foreach_attrs: list[str] | None = None

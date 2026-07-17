@@ -179,22 +179,26 @@ def _check_map_type_consistency(value: dict[Hashable, Any]) -> dict[Hashable, An
     return value
 
 
-def handle_dynamic_values(conf: Dict[str, List[Any]], has_dynamic_block: bool = False) -> bool:
+def handle_dynamic_values(
+    conf: Dict[str, List[Any]],
+    has_dynamic_block: bool = False,
+    merge_into_existing: bool = True,
+) -> bool:
     # recursively search for blocks that are dynamic
     for block_name in conf.keys():
         conf_block = conf[block_name]
         if isinstance(conf_block, dict):
-            has_dynamic_block = handle_dynamic_values(conf_block, has_dynamic_block)
+            has_dynamic_block = handle_dynamic_values(conf_block, has_dynamic_block, merge_into_existing)
 
         # if the configuration is a block element, search down again.
         if conf_block and isinstance(conf_block, list) and isinstance(conf_block[0], dict):
-            has_dynamic_block = handle_dynamic_values(conf_block[0], has_dynamic_block)
+            has_dynamic_block = handle_dynamic_values(conf_block[0], has_dynamic_block, merge_into_existing)
 
     # if a dynamic block exists somewhere in the resource it will return True
-    return process_dynamic_values(conf) or has_dynamic_block
+    return process_dynamic_values(conf, merge_into_existing) or has_dynamic_block
 
 
-def process_dynamic_values(conf: Dict[str, List[Any]]) -> bool:
+def process_dynamic_values(conf: Dict[str, List[Any]], merge_into_existing: bool = True) -> bool:
     dynamic_conf: Union[List[Any], Dict[str, List[Any]]] = conf.get("dynamic", {})
 
     if not isinstance(dynamic_conf, list):
@@ -209,14 +213,22 @@ def process_dynamic_values(conf: Dict[str, List[Any]]) -> bool:
                 dynamic_element = {}
 
         for element_name, element_value in dynamic_element.items():
+            if (
+                isinstance(element_value, dict)
+                and "for_each" in element_value
+                and _is_empty_dynamic_for_each(element_value.get("for_each"))
+            ):
+                has_dynamic_block = True
+                continue
             if "content" in element_value:
                 if element_name in conf:
-                    if not isinstance(conf[element_name], list):
-                        conf[element_name] = [conf[element_name]]
-                    if isinstance(element_value["content"], list):
-                        conf[element_name].extend(element_value["content"])
-                    else:
-                        conf[element_name].append(element_value["content"])
+                    if merge_into_existing:
+                        if not isinstance(conf[element_name], list):
+                            conf[element_name] = [conf[element_name]]
+                        if isinstance(element_value["content"], list):
+                            conf[element_name].extend(element_value["content"])
+                        else:
+                            conf[element_name].append(element_value["content"])
 
                 else:
                     conf[element_name] = pickle_deepcopy(element_value["content"])
@@ -228,3 +240,17 @@ def process_dynamic_values(conf: Dict[str, List[Any]]) -> bool:
         has_dynamic_block = True
 
     return has_dynamic_block
+
+
+def _is_empty_dynamic_for_each(for_each: Any) -> bool:
+    if isinstance(for_each, list) and len(for_each) == 1:
+        # Terraform parser typically wraps values with a single-element list
+        for_each = for_each[0]
+
+    if for_each is None or for_each is False:
+        return True
+
+    if isinstance(for_each, (str, list, tuple, set, dict)):
+        return len(for_each) == 0
+
+    return False

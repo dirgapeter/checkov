@@ -319,7 +319,10 @@ class TerraformVariableRenderer(VariableRenderer["TerraformLocalGraph"]):
         self._render_dynamic_blocks()
 
     def _render_dynamic_blocks(self) -> None:
-        vertex_indices = self.local_graph.vertices_by_block_type[BlockType.RESOURCE]
+        vertex_indices = (
+            self.local_graph.vertices_by_block_type[BlockType.RESOURCE]
+            + self.local_graph.vertices_by_block_type[BlockType.DATA]
+        )
 
         for idx in vertex_indices:
             vertex = self.local_graph.vertices[idx]
@@ -334,9 +337,17 @@ class TerraformVariableRenderer(VariableRenderer["TerraformLocalGraph"]):
                                      f' for blocks: {dynamic_blocks}')
                         continue
                     changed_attributes = []
+                    dyn_attr_keys: set[str] = set(vertex.dynamic_attributes or {})
 
                     for block_name, block_confs in rendered_blocks.items():
-                        vertex.update_inner_attribute(block_name, vertex.attributes, block_confs)
+                        if block_name not in dyn_attr_keys:
+                            existing = vertex.attributes.get(block_name, [])
+                            if not isinstance(existing, list):
+                                existing = [existing] if existing else []
+                            merged = existing + block_confs if isinstance(block_confs, list) else existing + [block_confs]
+                            vertex.update_inner_attribute(block_name, vertex.attributes, merged)
+                        else:
+                            vertex.update_inner_attribute(block_name, vertex.attributes, block_confs)
                         changed_attributes.append(block_name)
 
                     self.local_graph.update_vertex_config(vertex, changed_attributes, True)
@@ -372,6 +383,10 @@ class TerraformVariableRenderer(VariableRenderer["TerraformLocalGraph"]):
             block_content = block_values.get("content")
             dynamic_values = block_values.get("for_each")
             dynamic_values = TerraformVariableRenderer._handle_for_loop_in_dynamic_values(dynamic_values)
+            if isinstance(dynamic_values, (set, tuple)):
+                # `for_each` can evaluate to a set/tuple (e.g. via `toset(...)`), normalize to a list
+                # so downstream processing (which expects `list`) can handle it consistently.
+                dynamic_values = list(dynamic_values)
             if not block_content or not dynamic_values or isinstance(dynamic_values, str):
                 continue
 
