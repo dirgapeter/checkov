@@ -65,6 +65,8 @@ def evaluate_terraform(input_str: Any, keep_interpolations: bool = True) -> Any:
     second_evaluated_value = None
     if isinstance(evaluated_value, str):
         second_evaluated_value = _try_evaluate(evaluated_value)
+    else:
+        return evaluated_value
 
     if second_evaluated_value and callable(second_evaluated_value):
         return evaluated_value
@@ -118,8 +120,18 @@ def replace_string_value(original_str: Any, str_to_replace: str, replaced_value:
     if type(original_str) is list:
         for i, item in enumerate(original_str):
             original_str[i] = replace_string_value(item, str_to_replace, replaced_value, keep_origin)
-            if type(replaced_value) in [int, float, bool]:
-                original_str[i] = evaluate_terraform(original_str[i])
+            if type(replaced_value) in [int, float, bool] and isinstance(original_str[i], str):
+                # remove_interpolation strips the ${…} wrapper only when the whole block
+                # equals the variable being replaced (a simple direct reference such as
+                # "${local.name_count}").  In that case the result has no "${" left and is
+                # safe to evaluate eagerly.  When the reference sits inside a larger
+                # expression ("${local.a == True && local.b ? 1 : 0}"), the wrapper is kept
+                # and "${" is still present after a partial substitution — evaluating at that
+                # point would treat the remaining unresolved reference as falsy/truthy and
+                # corrupt the result.  The caller (update_evaluated_value) evaluates the
+                # fully-substituted string after all edges in the group have been processed.
+                if '${' not in original_str[i]:
+                    original_str[i] = evaluate_terraform(original_str[i])
             return original_str
 
     if str_to_replace not in original_str:
