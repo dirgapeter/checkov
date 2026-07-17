@@ -206,7 +206,7 @@ class Module:
                         has_dynamic_block = False
                     else:
                         old_attributes = pickle_deepcopy(attributes)
-                        has_dynamic_block = handle_dynamic_values(attributes)
+                        has_dynamic_block = handle_dynamic_values(attributes, merge_into_existing=False)
                         dynamic_attributes = {k: attributes[k] for k in set(attributes) - set(old_attributes)}
                     provisioner = attributes.get("provisioner")
                     if provisioner:
@@ -239,14 +239,26 @@ class Module:
             for data_type in data_dict:
                 for name in data_dict[data_type]:
                     block_name = f"{data_type}.{name}"
+                    attributes = self.clean_bad_characters(data_dict.get(data_type, {}).get(name, {}))
+                    dynamic_attributes = None
+                    if not isinstance(attributes, dict):
+                        continue
+                    if self.render_dynamic_blocks_env_var.lower() == 'false':
+                        has_dynamic_block = False
+                    else:
+                        old_attributes = pickle_deepcopy(attributes)
+                        has_dynamic_block = handle_dynamic_values(attributes, merge_into_existing=False)
+                        dynamic_attributes = {k: attributes[k] for k in set(attributes) - set(old_attributes)}
                     data_block = TerraformBlock(
                         block_type=BlockType.DATA,
                         name=block_name,
                         config=data_dict,
                         path=path,
-                        attributes=data_dict.get(data_type, {}).get(name, {}),
+                        attributes=attributes,
                         id=block_name,
                         source=self.source,
+                        has_dynamic_block=has_dynamic_block,
+                        dynamic_attributes=dynamic_attributes,
                     )
                     self._add_to_blocks(data_block)
 
