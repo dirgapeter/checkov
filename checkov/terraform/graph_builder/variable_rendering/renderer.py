@@ -353,6 +353,12 @@ class TerraformVariableRenderer(VariableRenderer["TerraformLocalGraph"]):
             elif isinstance(value, dict):
                 TerraformVariableRenderer._extract_dynamic_arguments(block_name, value, dynamic_arguments,
                                                                      path_accumulator + [argument])
+            elif isinstance(value, list) and any(
+                item in dynamic_value_refs or isinstance(item, str) and dynamic_value_dot_ref in item
+                for item in value
+            ):
+                # e.g. actions = [statement.value] or actions = ["prefix-${statement.value}"]
+                dynamic_arguments.append(DOT_SEPERATOR.join(filter(None, [*path_accumulator, argument])))
 
     @staticmethod
     def _process_dynamic_blocks(dynamic_blocks: list[dict[str, Any]] | dict[str, Any]) -> dict[
@@ -386,9 +392,7 @@ class TerraformVariableRenderer(VariableRenderer["TerraformLocalGraph"]):
                     block_conf = pickle_deepcopy(block_content)
                     block_conf.pop(DYNAMIC_STRING, None)
                     for dynamic_argument in dynamic_arguments:
-                        if dynamic_type == DYNAMIC_BLOCKS_MAPS:
-                            if not isinstance(dynamic_value, dict):
-                                continue
+                        if dynamic_type == DYNAMIC_BLOCKS_MAPS and isinstance(dynamic_value, dict):
                             TerraformVariableRenderer._assign_dynamic_value_for_list(
                                 dynamic_value=dynamic_value,
                                 dynamic_argument=dynamic_argument,
@@ -403,6 +407,7 @@ class TerraformVariableRenderer(VariableRenderer["TerraformLocalGraph"]):
                                 dynamic_argument=dynamic_argument,
                                 block_conf=block_conf,
                                 block_content=block_content,
+                                block_name=block_name,
                             )
 
                     block_confs.append(block_conf)
@@ -482,6 +487,7 @@ class TerraformVariableRenderer(VariableRenderer["TerraformLocalGraph"]):
             dynamic_argument: str,
             block_conf: dict[str, Any],
             block_content: dict[str, Any],
+            block_name: str = "",
     ) -> None:
         if isinstance(dynamic_value, dict):
             if dynamic_argument in dynamic_value:
@@ -491,7 +497,47 @@ class TerraformVariableRenderer(VariableRenderer["TerraformLocalGraph"]):
                     lookup_value = get_lookup_value(block_content, dynamic_argument)
                     dpath.set(block_conf, dynamic_argument, lookup_value, separator=DOT_SEPERATOR)
         else:
+            TerraformVariableRenderer._assign_dynamic_scalar_value(
+                dynamic_value=dynamic_value,
+                dynamic_argument=dynamic_argument,
+                block_conf=block_conf,
+                block_content=block_content,
+                block_name=block_name,
+            )
+
+    @staticmethod
+    def _assign_dynamic_scalar_value(
+            dynamic_value: Any,
+            dynamic_argument: str,
+            block_conf: dict[str, Any],
+            block_content: dict[str, Any],
+            block_name: str,
+    ) -> None:
+        """Substitute `<block_name>.value` (or `<block_name>["value"]`) references with the
+        scalar for_each item (e.g. a plain string from `toset([...])`), whether the reference
+        is the entire field (exact match, "ingress.value") or embedded inside a larger
+        interpolated string/list item (e.g. "prefix-${statement.value}")."""
+        if not block_name:
             dpath.set(block_conf, dynamic_argument, dynamic_value, separator=DOT_SEPERATOR)
+            return
+
+        dynamic_value_dot_ref = f"{block_name}.value"
+        dynamic_value_bracket_ref = f'{block_name}["value"]'
+
+        def _substitute(value: Any) -> Any:
+            if not isinstance(value, str):
+                return value
+            if value in (dynamic_value_dot_ref, dynamic_value_bracket_ref):
+                return dynamic_value
+            if dynamic_value_dot_ref in value:
+                return evaluator.replace_string_value(value, dynamic_value_dot_ref, dynamic_value)
+            return value
+
+        template_value = dpath.get(block_content, dynamic_argument, separator=DOT_SEPERATOR)
+        new_value = [_substitute(item) for item in template_value] if isinstance(template_value, list) \
+            else _substitute(template_value)
+
+        dpath.set(block_conf, dynamic_argument, new_value, separator=DOT_SEPERATOR)
 
     def shouldBeFilteredByConditionAndResourceType(self, attr: str, resource_type: List[str]) -> bool:
         if not resource_type:
