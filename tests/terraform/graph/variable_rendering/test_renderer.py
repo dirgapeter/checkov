@@ -420,6 +420,61 @@ class TestRenderer(TestCase):
         assert resources_vertex[0].attributes.get('identity').get('identity_ids') == 'null'
         assert resources_vertex[0].attributes.get('identity').get('type') == 'SystemAssigned'
 
+    def test_dynamic_data_blocks_with_static_same_type(self):
+        graph_manager = TerraformGraphManager('m', ['m'])
+        local_graph, _ = graph_manager.build_graph_from_source_directory(
+            os.path.join(TEST_DIRNAME, "test_resources", "dynamic_data_block_with_static_same_type"),
+            render_variables=True,
+        )
+        data_vertices = list(filter(lambda v: v.block_type == BlockType.DATA, local_graph.vertices))
+        mixed_true = next(v for v in data_vertices if v.name == "aws_iam_policy_document.mixed_true")
+        mixed_false = next(v for v in data_vertices if v.name == "aws_iam_policy_document.mixed_false")
+
+        def sid_value(stmt):
+            sid = stmt.get("sid")
+            if isinstance(sid, list):
+                return sid[0] if sid else None
+            return sid
+
+        true_sids = {sid_value(stmt) for stmt in mixed_true.attributes.get("statement", [])}
+        false_sids = {sid_value(stmt) for stmt in mixed_false.attributes.get("statement", [])}
+
+        assert true_sids == {
+            "ListSSCSpecificPolicies",
+            "AllowTokenizationTagReading",
+            "AllowRetrievePoliciesFromSSM",
+        }
+        assert false_sids == {
+            "ListSSCSpecificPolicies",
+            "AllowRetrievePoliciesFromSSM",
+        }
+
+    def test_dynamic_block_toset_multi_value(self):
+        # a single dynamic block whose for_each is a multi-item set of plain strings (e.g. via
+        # toset(var.x)), with content referencing <block_name>.value both directly in a list
+        # attribute and interpolated inside a string attribute.
+        graph_manager = TerraformGraphManager('m', ['m'])
+        local_graph, _ = graph_manager.build_graph_from_source_directory(
+            os.path.join(TEST_DIRNAME, "test_resources", "dynamic_block_toset_multi_value"),
+            render_variables=True,
+        )
+        data_vertices = list(filter(lambda v: v.block_type == BlockType.DATA, local_graph.vertices))
+        multi_doc = next(v for v in data_vertices if v.name == "aws_iam_policy_document.multi_doc")
+
+        statements = multi_doc.attributes.get("statement", [])
+        sids = {stmt.get("sid") for stmt in statements}
+
+        assert sids == {
+            "Static1",
+            "Static2",
+            "Dynamic-dynamodb:GetItem",
+            "Dynamic-dynamodb:Query",
+        }
+
+        dynamic_statements = {stmt.get("sid"): stmt for stmt in statements if stmt.get("sid", "").startswith("Dynamic-")}
+        assert dynamic_statements["Dynamic-dynamodb:GetItem"]["actions"] == ["dynamodb:GetItem"]
+        assert dynamic_statements["Dynamic-dynamodb:Query"]["actions"] == ["dynamodb:Query"]
+
     def test_lookup_from_var(self):
         graph_manager = TerraformGraphManager('m', ['m'])
         local_graph, _ = graph_manager.build_graph_from_source_directory(
